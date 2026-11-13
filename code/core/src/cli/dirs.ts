@@ -1,7 +1,6 @@
+import { createReadStream } from 'node:fs';
 import { join } from 'node:path';
-import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { ReadableStream } from 'node:stream/web';
 import { createGunzip } from 'node:zlib';
 
 import {
@@ -14,7 +13,6 @@ import type { JsPackageManager } from 'storybook/internal/common';
 import type { SupportedFramework } from 'storybook/internal/types';
 import { type SupportedRenderer } from 'storybook/internal/types';
 
-import getNpmTarballUrlDefault from 'get-npm-tarball-url';
 import { unpackTar } from 'modern-tar/fs';
 import invariant from 'tiny-invariant';
 
@@ -27,22 +25,17 @@ const resolveUsingBranchInstall = async (packageManager: JsPackageManager, reque
   // FIXME: this might not be the right version for community packages
   const version = versions[name] || (await packageManager.latestVersion(request));
 
-  // an artifact of esbuild + type=commonjs + exportmap
-  // @ts-expect-error (default export)
-  const getNpmTarballUrl = getNpmTarballUrlDefault.default || getNpmTarballUrlDefault;
-
-  const url = getNpmTarballUrl(request, version, {
-    registry: await packageManager.getRegistryURL(),
+  const stdout = await packageManager.executeCommand({
+    command: 'npm',
+    args: ['pack', `${request}@${version}`, '--pack-destination', tempDirectory, '--silent'],
   });
 
-  const response = await fetch(url);
-  if (!response.ok || !response.body) {
-    throw new Error(`Failed to download tarball from ${url}`);
-  }
+  const tarballFilename = stdout.trim().split('\n').pop()?.trim();
+  invariant(tarballFilename, `Failed to download tarball for ${request}@${version}`);
 
   // this unzips the tarball into the temp directory
   await pipeline(
-    Readable.fromWeb(response.body as ReadableStream<Uint8Array>),
+    createReadStream(join(tempDirectory, tarballFilename)),
     createGunzip(),
     unpackTar(tempDirectory)
   );
